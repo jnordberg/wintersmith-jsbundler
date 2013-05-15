@@ -1,9 +1,21 @@
 
-h1 The text archives
+script(src='main.js')
 
-for item in contents._.text
-  a(href=item.url)= item.filename
-  pre= item.text
+h1 Bundling your scripts
+
+h2 Log
+pre#log(style="height: 5em; overflow: scroll")
+
+for script in contents._.scripts
   hr
+  h2 #{ script.url } (#{ script.filepath.relative })
+  if script.deps.length > 0
+    p depends on
+      ul
+        for dep in script.deps
+          li= env.relativeContentsPath(dep)
+  pre: code= script.source
+
+hr
 
 p: em Cheerio

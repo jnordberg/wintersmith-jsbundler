@@ -1,39 +1,126 @@
-### A Wintersmith plugin. ###
+### Wintersmith plugin that bundles javascript
+    and coffeescript modules for the browser ###
 
+{bundle, traverseDependencies} = require 'commonjs-everywhere'
+escodegen = require 'escodegen'
 fs = require 'fs'
+path = require 'path'
+util = require 'util'
+{Graph} = require './graph'
+
+defaultFormat =
+  indent:
+    style: '  '
+    base: 0
+  renumber: yes
+  hexadecimal: yes
+  quotes: 'auto'
+  parentheses: no
+
+compactFormat =
+  indent:
+    style: ''
+    base: 0
+  renumber: yes
+  hexadecimal: yes
+  quotes: 'auto'
+  escapeless: yes
+  compact: yes
+  parentheses: no
+  semicolons: no
 
 module.exports = (env, callback) ->
-  # *env* is the current wintersmith environment
-  # *callback* should be called when the plugin has finished loading
+  options = env.config.bundler or {}
+  options.minify ?= (env.mode is 'build')
+  options.sourceMap ?= (env.mode is 'preview')
 
-  class MyPlugin extends env.ContentPlugin
-    ### Prepends 'Wintersmith is awesome' to text files. ###
+  cache =
+    etags: {}
+    processed: {}
+    sources: {}
+    deps: {}
 
-    constructor: (@filepath, text) ->
-      @text = 'Wintersmith is awesome!\n' + text
+  graph = new Graph (item) -> item
+
+  loadInstance = (filepath) ->
+    cache.etags[filepath.full] ?= {}
+    processed = traverseDependencies filepath.full, env.contentsPath,
+      cache: cache.etags[filepath.full]
+
+    for file, value of processed
+      if file is filepath.full
+        graph.addItem filepath.full
+      else
+        graph.addDependency filepath.full, file
+      cache.processed[file] = value
+      cache.sources['/'+env.relativeContentsPath(file)] = fs.readFileSync(file).toString()
+
+    return new ScriptBundler filepath
+
+  class ScriptBundler extends env.ContentPlugin
+
+    constructor: (@filepath) ->
+
+    @property 'source', ->
+      cache.sources["/#{ @filepath.relative }"]
+
+    @property 'deps', ->
+      graph.dependenciesFor @filepath.full
 
     getFilename: ->
-      # filename where plugin is rendered to, this plugin uses the
-      @filepath.relative
+      @filepath.relative.replace /\.coffee$/, '.js'
 
     getView: -> (env, locals, contents, templates, callback) ->
-      # note that this function returns a function, you can also return a string
-      # to use a view already added to the env, see env.registerView for more
+      opts =
+        comment: !options.minify
+        format: if options.minify then compactFormat else defaultFormat
 
-      # this view simply passes the text to the renderer
-      callback null, new Buffer(@text) # you can also pass a stream
+      if options.sourceMap
+        opts.sourceMap = true
+        opts.sourceMapWithCode = true
+        opts.sourceMapRoot = path.dirname(@filepath.relative) or '.'
 
-  MyPlugin.fromFile = (filepath, callback) ->
-    fs.readFile filepath.full, (error, result) ->
-      if not error?
-        plugin = new MyPlugin filepath, result.toString()
-      callback error, plugin
+      processed = {}
+      processed[@filepath.full] = cache.processed[@filepath.full]
+      for file in @deps
+        processed[file] = cache.processed[file]
 
-  # register the plugin to intercept .txt and .text files using a glob pattern
-  # the first argument is the content group the plugin will belong to
-  # i.e. directory grouping, contents.somedir._.text is an array of all
-  #      plugin instances beloning to the text group in somedir
-  env.registerContentPlugin 'text', '**/*.*(txt|text)', MyPlugin
+      try
+        bundled = bundle processed, @filepath.full, env.contentsPath, {}
+      catch error
+        callback error
+        return
 
-  # tell plugin manager we are done
+      if options.sourceMap
+        {code, map} = escodegen.generate bundled, opts
+
+        map = map.toJSON()
+        map.sourcesContent = map.sources.map (name) -> cache.sources[name]
+        map = new Buffer(JSON.stringify(map)).toString('base64')
+
+        code = """
+          //@ sourceMappingURL=data:application/json;base64,#{ map }
+          #{ code }
+        """
+      else
+        code = escodegen.generate bundled, opts
+
+      callback null, new Buffer(code)
+
+    getPluginColor: -> 'magenta'
+    getPluginInfo: ->
+      deps = @deps.map (dep) -> env.relativeContentsPath dep
+      if deps.length
+        "#{ super() } deps: #{ deps.sort().join(' ') }"
+      else
+        super()
+
+  ScriptBundler.fromFile = (filepath, callback) ->
+    try
+      instance = loadInstance filepath
+    catch error
+      cache.etags[filepath.full] = {}
+    callback error, instance
+
+  env.registerContentPlugin 'scripts', '**/*.*(js|coffee)', ScriptBundler
   callback()

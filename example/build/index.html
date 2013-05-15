@@ -1,0 +1,35 @@
+<script src="main.js"></script><h1>Bundling your scripts</h1><h2>Log</h2><pre id="log" style="height: 5em; overflow: scroll"></pre><hr/><h2>/foo.js (foo.js)</h2><p>depends on<ul><li>time.coffee</li><li>log.coffee</li></ul></p><pre><code>var log = require('./log');
+
+module.exports = function(bar) {
+  log('foo' + (bar || 'bar'));
+};
+</code></pre><hr/><h2>/log.js (log.coffee)</h2><p>depends on<ul><li>time.coffee</li></ul></p><pre><code>time = require './time'
+
+el = null
+module.exports = (message) -&gt;
+  el ?= document.getElementById 'log'
+  msg = document.createTextNode &quot;[#{ time() }] #{ message }\n&quot;
+  el.appendChild msg
+</code></pre><hr/><h2>/main.js (main.coffee)</h2><p>depends on<ul><li>subdir/periodic.js</li><li>time.coffee</li><li>log.coffee</li><li>foo.js</li></ul></p><pre><code>foo = require './foo'
+log = require './log'
+periodic = require './subdir/periodic'
+
+main = -&gt;
+  log 'I can have green tea?'
+  foo 'tea'
+  periodic &quot;hello there&quot;, log
+
+window.addEventListener 'DOMContentLoaded', main, false
+</code></pre><hr/><h2>/time.js (time.coffee)</h2><pre><code>zeropad = (number, pad) -&gt;
+  rv = number.toString()
+  rv = '0' + rv if rv.length &lt;= 1
+  return rv
+
+module.exports = (date=new Date) -&gt;
+  parts = [
+    zeropad date.getHours()
+    zeropad date.getMinutes()
+    zeropad date.getSeconds()
+  ]
+  return parts.join ':'
+</code></pre><hr/><p><em>Cheerio</em></p>
